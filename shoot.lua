@@ -1,203 +1,83 @@
-----------------------------------------------------------------------------------------------------
--- Code related to shooting bullets
-----------------------------------------------------------------------------------------------------
--- this function sets the initial velocities for each bullet
--- it doesn't shoot - it relies on the "drawShot" function to continue
---
--- f - force            additional to player's chosen force,
--- t - theta (angle)    additional to player's chosen angle,
--- bulletIndex - index of the bullet
-function setBulletInitialVelocity(f, t, bulletIndex)
+-- Firing and the short explosion burst.
 
-    if turn == 1 then
-        -- preturb it by a bit for jitter so it's not the same
-        f = player1.force + f -- + math.random() * 2
-        t = player1.angle + t -- + math.random() * 10
-    elseif turn == 2 then
-        f = player2.force + f -- + math.random() * 2
-        t = player2.angle + t -- + math.random() * 10
-    end
-
-    -- *** REDUCE THE FORCE BY some amount and reduce weight of planets by some amount
-    -- *** this will make the resolution of the shot higher!!?! ***
-    f = f / 2
-
-    -- calculate the x and y components of shot for initial force
-    allBullets[bulletIndex].vx = f * math.cos(0.0174533 * t)
-    allBullets[bulletIndex].vy = f * math.sin(0.0174533 * t)
-
+function setBulletVelocity(bullet, force, angle)
+    local tuned = force / 2
+    bullet.vx = tuned * math.cos(math.rad(angle))
+    bullet.vy = tuned * math.sin(math.rad(angle))
 end
 
--- to split a bullet (special bullet type allows for splitting while in air)
-function split(x, y)
-
-    love.graphics.ellipse('line', x, y, 10, 10)
-
-    -- print("SPLIT @ ", x, y)
-
-    temp = 0
-
-    for i = 1, 3 do
-        temp = numOfBullets + i
-        allBullets[i] = {}
-        allBullets[temp].x = x
-        allBullets[temp].y = y
-    end
-
-    numOfBullets = numOfBullets + 3
-    temp = 0
-
-    for i = 1, 3 do
-        temp = numOfBullets - 3 + i
-        setBulletInitialVelocity(0.01, math.random(0, 360), temp)
-    end
-
-end
-
-function shotType1()
-
-    -- shoot only one bullet
-    numOfBullets = 1
-
-    for i = 1, numOfBullets do
-        allBullets[i] = {}
-        allBullets[i].x = shipX
-        allBullets[i].y = shipY
-        setBulletInitialVelocity(1, 1, i)
-    end
-
-end
-
-function shotType2()
-
-    -- shoot three bullets
-    numOfBullets = 30
-
-    for i = 1, numOfBullets do
-        allBullets[i] = {}
-        allBullets[i].x = shipX
-        allBullets[i].y = shipY
-        setBulletInitialVelocity(1, 1, i)
-    end
-
-end
-
-function shotType3()
-
-    -- shoot five bullets
-    numOfBullets = 5
-
-    for i = 1, numOfBullets do
-        allBullets[i] = {}
-        allBullets[i].x = shipX
-        allBullets[i].y = shipY
-        setBulletInitialVelocity(1, 1, i)
-    end
-
-end
-
-function shotType4()
-
-    -- shoot only one bullet
-    numOfBullets = 1
-
-    for i = 1, numOfBullets do
-        allBullets[i] = {}
-        allBullets[i].x = shipX
-        allBullets[i].y = shipY
-        setBulletInitialVelocity(1, 1, i)
-    end
-
+function spawnBullet(x, y, force, angle)
+    local bullet = { x = x, y = y, vx = 0, vy = 0, dead = false }
+    setBulletVelocity(bullet, force, angle)
+    allBullets[#allBullets + 1] = bullet
 end
 
 function playerPressedShootButton()
+    if state ~= "playing" or shotInProgress then return end
+    if handoff > 0 then return end
+    if matchMode == "ai" and turn == 2 and aiPhase ~= "show" and not smokeMode and not screenshotMode then
+        return
+    end
+
+    local player = currentPlayer()
+    player.lastAngle = player.angle
+    player.lastForce = player.force
+    player1.hitThisVolley = false
+    player2.hitThisVolley = false
+    allBullets = {}
+    benign = 0
+    endOfRound = false
+
+    if turn == 1 then
+        trailColor = { 0.98, 0.72, 0.38, 1 }
+    else
+        trailColor = { 0.45, 0.86, 0.92, 1 }
+    end
 
     dimTrails()
 
-    print("Whose is shooting? Player ", turn)
-
-    -- origin of the shot set to player's location
-    if turn == 1 then
-        shipX = player1.x
-        shipY = player1.y
-        player1.lastAngle = player1.angle
-        player1.lastForce = player1.force
-    elseif turn == 2 then
-        shipX = player2.x
-        shipY = player2.y
-        player2.lastAngle = player2.angle
-        player2.lastForce = player2.force
-    end
-
-    allBullets = {} -- reset to empty
-
-    -- make bullet benign
-    benign = 0
-
-    if bulType == 1 then
-        shotType1()
-    elseif bulType == 2 then
-        shotType2()
+    local offsets
+    if bulType == 2 then
+        offsets = { -8, -4, 0, 4, 8 }
     elseif bulType == 3 then
-        shotType3()
-    elseif bulType == 4 then
-        shotType4()
+        offsets = { -18, 0, 18 }
     else
-        for i = 1, numOfBullets do
-            allBullets[i] = {}
-            allBullets[i].x = shipX
-            allBullets[i].y = shipY
-            setBulletInitialVelocity(2, 2, i)
-        end
+        offsets = { 0 }
     end
-
-    love.graphics.setCanvas(canvas)
-    drawUI()
-    love.graphics.setCanvas()
+    for i = 1, #offsets do
+        local forceJitter = 0
+        if bulType == 2 then forceJitter = (i - 3) * 0.04 end
+        spawnBullet(player.x, player.y, clamp(player.force + forceJitter, MIN_FORCE, MAX_FORCE), wrapAngle(player.angle + offsets[i]))
+    end
 
     shotInProgress = true
-
+    if love.system.vibrate then
+        pcall(love.system.vibrate, 0.02)
+    end
 end
 
--- blow up a location in a pretty way
 function explode(x, y)
-   
-    temp = 0
-    
-    love.graphics.setCanvas(canvas)
- 
-    for i = 1, 10 do
-        temp = numOfBullets + i
-        allBullets[temp] = {}
-
-        randX = math.random(-20, 20)
-        randY = math.random(-20, 20)
-
-        radius = math.random(5, 15)
-        setExplodyColor()
-        love.graphics.ellipse('fill', x + randX, y + randY, radius, radius)
-
-        allBullets[temp].x = x + randX
-        allBullets[temp].y = y + randY
+    if not trailCanvas then return end
+    love.graphics.setCanvas(trailCanvas)
+    love.graphics.push()
+    love.graphics.scale(viewScale, viewScale)
+    for i = 1, 8 do
+        local ox = math.random(-16, 16)
+        local oy = math.random(-16, 16)
+        local radius = math.random(4, 12)
+        love.graphics.setColor(1, math.random() * 0.75, 0.15, 0.9)
+        love.graphics.circle("fill", x + ox, y + oy, radius)
     end
-
+    love.graphics.pop()
     love.graphics.setCanvas()
 
-    numOfBullets = numOfBullets + 10
-    temp = 0
-
-    for i = 1, 10 do
-        temp = numOfBullets - 10 + i
-        setBulletInitialVelocity(1, math.random(0, 360), temp)
+    for i = 1, 8 do
+        local bullet = {
+            x = x + math.random(-10, 10),
+            y = y + math.random(-10, 10),
+            dead = false,
+        }
+        setBulletVelocity(bullet, 1.1 + (i % 3) * 0.25, math.random(0, 359))
+        allBullets[#allBullets + 1] = bullet
     end
-
-end
-
-function setExplodyColor()
-
-    -- red     1    0     0
-    -- orange  1    0.5   0
-    -- yellow  1    1     0
-
-    love.graphics.setColor(1, math.random(0, 255) / 255, 0, 1)
 end

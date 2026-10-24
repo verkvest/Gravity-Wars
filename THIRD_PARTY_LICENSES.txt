@@ -1,0 +1,71 @@
+Cindarc
+Copyright (c) 2026 Aleksandr Verkhovod
+Bundle id: es.verkvest.cindarc
+
+Cindarc is a mobile rebrand and adaptation of Gravity Wars. The gameplay,
+original code, and the two ship sprites (assets/ss1.png, assets/ss2.png) are
+used under the MIT license below. The game is built with LÖVE 11.5.
+
+
+Gravity Wars — original game
+Copyright (c) 2020 Boris (whyboris)
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+basis33.ttf
+Copyright (c) 2004, 2005 Tristan Grimmer
+Copyright (c) 2014 Manchson
+https://github.com/Manchson/basis33
+
+The font is included under the same MIT license as the original game. The
+copyright notices and the permission notice above apply to the font as well.
+
+
+LÖVE (Love2D) 11.5
+Copyright (c) 2006-2023 LÖVE Development Team
+https://love2d.org
+
+This software is provided 'as-is', without any express or implied warranty.
+In no event will the authors be held liable for any damages arising from the
+use of this software.
+
+Permission is granted to anyone to use this software for any purpose,
+including commercial applications, and to alter it and redistribute it
+freely, subject to the following restrictions:
+
+1. The origin of this software must not be misrepresented; you must not
+   claim that you wrote the original software. If you use this software in a
+   product, an acknowledgment in the product documentation would be
+   appreciated but is not required.
+
+2. Altered source versions must be plainly marked as such, and must not be
+   misrepresented as being the original software.
+
+3. This notice may not be removed or altered from any source distribution.
+
+LÖVE is distributed under the zlib license. Cindarc packages the official
+LÖVE 11.5 iOS Xcode project (love-ios) and the official LÖVE Android Gradle
+project (love-android, tag 11.5a). Those engine trees keep their own upstream
+license files; this screen and this file are the in-product notice.
+
+
+No other third-party music, fonts, or images are bundled.

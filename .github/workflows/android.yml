@@ -1,0 +1,135 @@
+# Fuse Cindarc into the official love-android 11.5a Gradle project.
+# Release AAB + APK, targetSdk 36. Uses the upload keystore when the secrets
+# exist, otherwise a debug keystore so the APK is still installable.
+name: android
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, "cursor/**"]
+
+jobs:
+  screenshots:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Phone-viewport screenshots
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgl1 libglib2.0-0 ca-certificates curl zip unzip
+          chmod +x scripts/phone_screenshots.sh
+          scripts/phone_screenshots.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phone-screenshots
+          path: build/phone-screenshots/*.png
+
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      HAS_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_B64 != '' && secrets.ANDROID_KEYSTORE_PASSWORD != '' && secrets.ANDROID_KEY_ALIAS != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Android SDK 36 and NDK
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager --install \
+            "platforms;android-36" \
+            "build-tools;35.0.0" \
+            "ndk;25.2.9519653"
+
+      - name: Checkout love-android 11.5a
+        uses: actions/checkout@v4
+        with:
+          repository: love2d/love-android
+          ref: 11.5a
+          path: love-android
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Package game.love and configure the Gradle project
+        run: |
+          set -euo pipefail
+          chmod +x scripts/package_love.sh scripts/prepare_android_tree.sh
+          scripts/package_love.sh "$RUNNER_TEMP/game.love"
+          scripts/prepare_android_tree.sh love-android "$RUNNER_TEMP/game.love" "${{ github.run_number }}"
+          grep -n "targetSdk 36" love-android/app/build.gradle love-android/love/build.gradle
+          grep -n "es.verkvest.cindarc" love-android/gradle.properties
+
+      - name: Sign with the upload keystore, or a debug keystore
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          store_env() {
+            local name="$1"
+            local value="$2"
+            local delim="CINDARC_ENV_${name}"
+            echo "${name}<<${delim}" >> "$GITHUB_ENV"
+            printf '%s\n' "$value" >> "$GITHUB_ENV"
+            echo "${delim}" >> "$GITHUB_ENV"
+          }
+          if [ "$HAS_KEYSTORE" = "true" ]; then
+            printf '%s' "$ANDROID_KEYSTORE_B64" | tr -d '\n' | base64 --decode > "$RUNNER_TEMP/cindarc.keystore"
+            store_env CINDARC_KEYSTORE "$RUNNER_TEMP/cindarc.keystore"
+            store_env CINDARC_KEYSTORE_PASSWORD "$ANDROID_KEYSTORE_PASSWORD"
+            store_env CINDARC_KEY_ALIAS "$ANDROID_KEY_ALIAS"
+            store_env CINDARC_KEY_PASSWORD "$ANDROID_KEYSTORE_PASSWORD"
+            echo "Using the uploaded release keystore."
+          else
+            keytool -genkeypair -keystore "$RUNNER_TEMP/cindarc.keystore" \
+              -storepass android -keypass android -alias cindarcdebug \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Cindarc Debug, OU=verkvest, O=verkvest, L=Madrid, ST=Madrid, C=ES"
+            store_env CINDARC_KEYSTORE "$RUNNER_TEMP/cindarc.keystore"
+            store_env CINDARC_KEYSTORE_PASSWORD "android"
+            store_env CINDARC_KEY_ALIAS "cindarcdebug"
+            store_env CINDARC_KEY_PASSWORD "android"
+            echo "::notice::ANDROID_KEYSTORE_* secrets are absent. Signing the release APK and AAB with a debug keystore."
+          fi
+
+      - name: Build release APK and AAB
+        working-directory: love-android
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleEmbedNoRecordRelease bundleEmbedNoRecordRelease
+          APK=$(find app/build/outputs/apk -name '*.apk' | head -1)
+          AAB=$(find app/build/outputs/bundle -name '*.aab' | head -1)
+          [ -n "$APK" ] && [ -n "$AAB" ]
+          echo "APK=$APK" >> "$GITHUB_ENV"
+          echo "AAB=$AAB" >> "$GITHUB_ENV"
+          AAPT=$(find "${ANDROID_SDK_ROOT:-$ANDROID_HOME}" -path '*build-tools/*/aapt' | sort | tail -1)
+          "$AAPT" dump badging "$APK" | tee "$RUNNER_TEMP/badging.txt"
+          grep -q "package: name='es.verkvest.cindarc'" "$RUNNER_TEMP/badging.txt"
+          grep -q "targetSdkVersion:'36'" "$RUNNER_TEMP/badging.txt"
+          APKSIGNER=$(find "${ANDROID_SDK_ROOT:-$ANDROID_HOME}" -path '*build-tools/*/apksigner' | sort | tail -1)
+          "$APKSIGNER" verify --print-certs "$APK" | head -20
+          mkdir -p "$GITHUB_WORKSPACE/build/android"
+          cp "$APK" "$GITHUB_WORKSPACE/build/android/cindarc.apk"
+          cp "$AAB" "$GITHUB_WORKSPACE/build/android/cindarc.aab"
+          cp "$RUNNER_TEMP/badging.txt" "$GITHUB_WORKSPACE/build/android/badging.txt"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cindarc-android
+          path: |
+            build/android/cindarc.apk
+            build/android/cindarc.aab
+            build/android/badging.txt
+          if-no-files-found: ignore

@@ -1,131 +1,125 @@
-----------------------------------------------------------------------------------------------------
--- Code related to touch interactions (from Codea, not yet updated for Love2D)
-----------------------------------------------------------------------------------------------------
--- toggle booleans if clicked in areas where button / sliders are
-function love.mousepressed(x, y, button)
+-- Pointer controls. LÖVE also synthesizes mouse events from the primary touch.
 
-    -- print(x)
-    -- print(y)
+function humanMayAct()
+    if state ~= "playing" or shotInProgress or handoff > 0 then return false end
+    if matchMode == "ai" and turn == 2 then return false end
+    return true
+end
 
-    --[[ fun times
-    if shotInProgress == true then
-        explode(x,y)
-    end
-    ]] --
+function applySlider(x)
+    local t = clamp((x - slider.x) / math.max(1, slider.w), 0, 1)
+    currentPlayer().force = MIN_FORCE + t * (MAX_FORCE - MIN_FORCE)
+end
 
-    -- rectangle on bottom-right to detect pressing shoot button
-    if shotInProgress == false and (x > (WIDTH - 100) and y > HEIGHT - 100) then
+function applyAim(x, y)
+    local player = currentPlayer()
+    local angle = math.deg(math.atan2(y - player.y, x - player.x))
+    player.angle = wrapAngle(angle)
+    local reach = dist(player.x, player.y, x, y)
+    player.force = clamp(reach / 70, MIN_FORCE, MAX_FORCE)
+end
+
+function activateButton(button)
+    if button.id == "ai" then
+        startMatch("ai")
+    elseif button.id == "hotseat" then
+        startMatch("hotseat")
+    elseif button.id == "credits" then
+        resetCredits()
+    elseif button.id == "back" or button.id == "menu" or button.id == "tomenu" then
+        state = "menu"
+        shotInProgress = false
+        handoff = 0
+        aiPhase = "idle"
+    elseif button.id == "rematch" then
+        startMatch(matchMode)
+    elseif button.id == "fire" then
         playerPressedShootButton()
-    end
-
-    if shotInProgress == false then
-        clickNearShip = nearShip(x, y, currentPlayer())
-
-        if clickNearShip == 'force' then
-            mouseXinitial = x
-            draggingType = 'force'
-            dragging = true
-            love.mouse.setCursor(dragCursor)
-        elseif clickNearShip == 'angle' then
-            mouseXinitial = x
-            draggingType = 'angle'
-            dragging = true
-            love.mouse.setCursor(dragCursor)
+    elseif button.id == "type" then
+        if humanMayAct() then
+            bulType = bulType % 3 + 1
         end
-
+    elseif button.id == "anglem" then
+        if humanMayAct() then
+            currentPlayer().angle = wrapAngle(currentPlayer().angle - 6)
+        end
+    elseif button.id == "anglep" then
+        if humanMayAct() then
+            currentPlayer().angle = wrapAngle(currentPlayer().angle + 6)
+        end
     end
-
 end
 
--- returns 'force', 'angle', 'no'
-function nearShip(x, y, playerN)
+function love.mousepressed(x, y, button)
+    if not layoutReady or button ~= 1 then return end
+    layoutButtons()
+    local lx, ly = screenToLogical(x, y)
+    pointer.down = true
+    pointer.x, pointer.y = lx, ly
+    pointer.mode = nil
 
-    forceOffset = 100 * playerN.force / 5
-
-    distance = math.pow(math.pow((playerN.x - x), 2) + math.pow((playerN.y - y), 2), 0.5)
-
-    if distance < clamp(forceOffset, 10, 90) then
-        return 'force'
-    elseif distance < 100 then
-        return 'angle'
-    else
-        return 'no'
+    local hit = hitButton(lx, ly)
+    if hit then
+        pointer.mode = "button"
+        pointer.button = hit.id
+        if hit.id ~= "fire" then
+            activateButton(hit)
+        end
+        return
     end
 
+    if state == "playing" and pointInSlider(lx, ly) and humanMayAct() then
+        pointer.mode = "slider"
+        applySlider(lx)
+        return
+    end
+
+    if state == "credits" then
+        pointer.mode = "scroll"
+        pointer.scroll = creditsScroll
+        return
+    end
+
+    if state == "playing" and humanMayAct() then
+        local player = currentPlayer()
+        if lx > fieldL and lx < fieldR and ly > fieldT and ly < fieldB then
+            pointer.mode = "aim"
+            applyAim(lx, ly)
+        elseif dist(lx, ly, player.x, player.y) < 120 then
+            pointer.mode = "aim"
+            applyAim(lx, ly)
+        end
+    end
 end
 
-
--- short circuit the love.update function with boolean
 function love.mousereleased(x, y, button)
-    dragging = false
-    love.mouse.setCursor()
-end
-
--- if the mouse is being dragged after clicking, update the values of force or angle
--- uses distance from initial click for smoothly
-function love.update(dt)
-    if dragging then
-
-        mouseXcurrent = love.mouse.getX()
-
-        if mouseXinitial ~= mouseXcurrent then
-
-            diff = mouseXcurrent - mouseXinitial
-
-            if draggingType == 'angle' then
-
-                if turn == 1 then
-                    player1.angle = getAngle(player1, diff)
-                elseif turn == 2 then
-                    player2.angle = getAngle(player2, diff)
-                end
-
-            elseif draggingType == 'force' then
-
-                if turn == 1 then
-                    player1.force = getForce(player1, diff)
-                elseif turn == 2 then
-                    player2.force = getForce(player2, diff)
-                end
-
-            end
-
-            love.graphics.setCanvas(canvas)
-            drawUI()
-            love.graphics.setCanvas()
-
+    if button ~= 1 then return end
+    if pointer.mode == "button" and pointer.button == "fire" then
+        local lx, ly = screenToLogical(x, y)
+        layoutButtons()
+        local hit = hitButton(lx, ly)
+        if hit and hit.id == "fire" then
+            activateButton(hit)
         end
     end
-
-    -- if shotInProgress == false then
-    --     if keyUp then
-    --         player1.force = player1.force * 1.01
-    --     end
-    -- end
+    pointer.down = false
+    pointer.mode = nil
 end
 
-function getForce(playerN, diff)
-
-    return clamp(playerN.force + clamp(math.pow(diff / 1000, 3), -0.02, 0.02), 0, 5)
-
-end
-
-function getAngle(playerN, diff)
-
-    angle = playerN.angle + clamp(math.pow(diff / 200, 3), -1, 1)
-    if angle > 360 then
-        angle = angle - 360
-    elseif angle < 0 then
-        angle = angle + 360
+function love.mousemoved(x, y)
+    if not pointer.down or not layoutReady then return end
+    local lx, ly = screenToLogical(x, y)
+    if pointer.mode == "slider" then
+        applySlider(lx)
+    elseif pointer.mode == "aim" then
+        applyAim(lx, ly)
+    elseif pointer.mode == "scroll" then
+        creditsScroll = clamp(pointer.scroll + (pointer.y - ly), 0, creditsMax)
     end
-
-    return angle
-
 end
 
--- make the input value never go below min or above max
-function clamp(value, min, max)
-
-    return math.max(math.min(value, max), min)
-
+function love.wheelmoved(_, dy)
+    if state == "credits" then
+        creditsScroll = clamp(creditsScroll - dy * 28, 0, math.max(creditsMax, 0))
+    end
 end

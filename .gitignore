@@ -1,0 +1,6 @@
+build/
+*.love
+.DS_Store
+xdg/
+squashfs-root/
+*.AppImage
