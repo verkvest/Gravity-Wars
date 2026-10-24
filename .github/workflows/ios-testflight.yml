@@ -1,0 +1,243 @@
+# Build the official LÖVE 11.5 iOS Xcode project with Cindarc fused in,
+# sign with the App Store Connect API key, and upload to TestFlight.
+name: ios-testflight
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, "cursor/**"]
+    tags: ["testflight-*"]
+
+env:
+  TEAM_ID: 38PT254HDZ
+  BUNDLE_ID: es.verkvest.cindarc
+  APP_NAME: Cindarc
+  APP_VERSION: 0.1.0
+
+jobs:
+  testflight:
+    runs-on: macos-15
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      HAS_KEY: ${{ secrets.APPSTORE_API_KEY_P8 != '' && secrets.APPSTORE_API_KEY_ID != '' && secrets.APPSTORE_API_ISSUER_ID != '' }}
+    steps:
+      - name: Require App Store Connect API secrets
+        run: |
+          if [ "$HAS_KEY" != "true" ]; then
+            echo "::error::APPSTORE_API_KEY_ID, APPSTORE_API_ISSUER_ID, and APPSTORE_API_KEY_P8 must be set."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - name: Xcode 26 (App Store requires the iOS 26 SDK)
+        run: |
+          set -euo pipefail
+          X=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | grep -vi beta | sort -V | tail -1)
+          if [ -z "$X" ]; then
+            X=$(ls -d /Applications/Xcode*.app 2>/dev/null | grep -vi beta | sort -V | tail -1)
+          fi
+          [ -n "$X" ]
+          sudo xcode-select -s "$X"
+          xcodebuild -version
+
+      - name: Install API key
+        env:
+          APPSTORE_API_KEY_P8: ${{ secrets.APPSTORE_API_KEY_P8 }}
+          APPSTORE_API_KEY_ID: ${{ secrets.APPSTORE_API_KEY_ID }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.appstoreconnect/private_keys
+          KEYFILE=~/.appstoreconnect/private_keys/AuthKey_${APPSTORE_API_KEY_ID}.p8
+          if printf '%s' "$APPSTORE_API_KEY_P8" | grep -q "BEGIN PRIVATE KEY"; then
+            printf '%s\n' "$APPSTORE_API_KEY_P8" > "$KEYFILE"
+          else
+            printf '%s' "$APPSTORE_API_KEY_P8" | base64 --decode > "$KEYFILE"
+          fi
+          chmod 600 "$KEYFILE"
+          echo "KEYFILE=$KEYFILE" >> "$GITHUB_ENV"
+
+      - name: Register bundle id if needed
+        env:
+          APPSTORE_API_KEY_ID: ${{ secrets.APPSTORE_API_KEY_ID }}
+          APPSTORE_API_ISSUER_ID: ${{ secrets.APPSTORE_API_ISSUER_ID }}
+          APPSTORE_API_KEY_PATH: ${{ env.KEYFILE }}
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/py"
+          "$RUNNER_TEMP/py/bin/pip" install --disable-pip-version-check pyjwt cryptography
+          "$RUNNER_TEMP/py/bin/python" scripts/register_bundle_id.py
+
+      - name: Checkout LÖVE 11.5
+        uses: actions/checkout@v4
+        with:
+          repository: love2d/love
+          ref: 11.5
+          path: love
+          fetch-depth: 1
+
+      - name: Install iOS libraries and fuse game.love
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 5 -o "$RUNNER_TEMP/libs.zip" \
+            https://github.com/love2d/love/releases/download/11.5/love-11.5-apple-libraries.zip
+          rm -rf "$RUNNER_TEMP/libs"
+          unzip -q "$RUNNER_TEMP/libs.zip" -d "$RUNNER_TEMP/libs"
+          rm -rf love/platform/xcode/ios/libraries
+          mv "$RUNNER_TEMP/libs/love-apple-dependencies/iOS/libraries" love/platform/xcode/ios/libraries
+          chmod +x scripts/package_love.sh
+          scripts/package_love.sh "$RUNNER_TEMP/game.love"
+          cp "$RUNNER_TEMP/game.love" love/platform/xcode/ios/game.love
+          python3 scripts/inject_game_love.py love/platform/xcode/love.xcodeproj/project.pbxproj
+          python3 scripts/patch_ios_plist.py love/platform/xcode/ios/love-ios.plist \
+            "$APP_VERSION" "${{ github.run_number }}" "$BUNDLE_ID" "$APP_NAME"
+          ICONSET="love/platform/xcode/Images.xcassets/iOS AppIcon.appiconset"
+          cp mobile/icons/ios/*.png "$ICONSET/"
+          mkdir -p love/platform/xcode/love.xcodeproj/xcshareddata/xcschemes
+          cp mobile/ios/love-ios.xcscheme love/platform/xcode/love.xcodeproj/xcshareddata/xcschemes/love-ios.xcscheme
+          sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = 8.0/IPHONEOS_DEPLOYMENT_TARGET = 15.0/g' \
+            love/platform/xcode/love.xcodeproj/project.pbxproj \
+            love/platform/xcode/liblove.xcodeproj/project.pbxproj
+          sed -i '' 's/c++0x/c++14/g' \
+            love/platform/xcode/love.xcodeproj/project.pbxproj \
+            love/platform/xcode/liblove.xcodeproj/project.pbxproj
+          # Install only love.app. A command-line SKIP_INSTALL=NO would also
+          # install liblove.a and Xcode would treat the archive as generic.
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("love/platform/xcode/love.xcodeproj/project.pbxproj")
+          text = p.read_text()
+          needle = '\t\t\t\tINFOPLIST_FILE = "$(SRCROOT)/ios/love-ios.plist";\n'
+          addition = needle + "\t\t\t\tINSTALL_PATH = /Applications;\n\t\t\t\tSKIP_INSTALL = NO;\n"
+          if needle + "\t\t\t\tINSTALL_PATH = /Applications;\n" not in text:
+              count = text.count(needle)
+              if count < 1:
+                  raise SystemExit("love-ios Info.plist build setting not found")
+              text = text.replace(needle, addition)
+              p.write_text(text)
+              print(f"set INSTALL_PATH on {count} love-ios configs")
+          lib = Path("love/platform/xcode/liblove.xcodeproj/project.pbxproj").read_text()
+          if "SKIP_INSTALL = YES;" not in lib:
+              raise SystemExit("liblove must keep SKIP_INSTALL = YES")
+          PY
+
+      - name: Archive (unsigned; cloud signing happens at export)
+        env:
+          APPSTORE_API_KEY_ID: ${{ secrets.APPSTORE_API_KEY_ID }}
+          APPSTORE_API_ISSUER_ID: ${{ secrets.APPSTORE_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          xcodebuild -project love/platform/xcode/love.xcodeproj -scheme love-ios -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/Cindarc.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$KEYFILE" \
+            -authenticationKeyID "$APPSTORE_API_KEY_ID" \
+            -authenticationKeyIssuerID "$APPSTORE_API_ISSUER_ID" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            CODE_SIGN_STYLE=Automatic \
+            PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
+            MARKETING_VERSION="$APP_VERSION" \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            IPHONEOS_DEPLOYMENT_TARGET=15.0 \
+            ENABLE_BITCODE=NO \
+            ENABLE_USER_SCRIPT_SANDBOXING=NO \
+            archive | tee "$RUNNER_TEMP/archive.log" | tail -80
+          ARCHIVE="$RUNNER_TEMP/Cindarc.xcarchive"
+          # A static library next to the app makes export reject every method.
+          find "$ARCHIVE/Products" -name '*.a' -not -path '*.app/*' -print -delete
+          echo "---- archive products ----"
+          find "$ARCHIVE/Products" -maxdepth 3 -print
+          APP=$(find "$ARCHIVE/Products" -name '*.app' -type d | head -1)
+          [ -n "$APP" ]
+          echo "archived app: $APP"
+          rm -rf "$APP/game.love"
+          cp "$RUNNER_TEMP/game.love" "$APP/game.love"
+          python3 scripts/patch_ios_plist.py "$APP/Info.plist" \
+            "$APP_VERSION" "${{ github.run_number }}" "$BUNDLE_ID" "$APP_NAME"
+          /usr/libexec/PlistBuddy -c Print "$APP/Info.plist" | head -40
+          test -f "$APP/game.love"
+          BUILD_NUMBER="${{ github.run_number }}" python3 - <<'PY'
+          import os, plistlib
+          from pathlib import Path
+          info = Path(os.environ["RUNNER_TEMP"]) / "Cindarc.xcarchive" / "Info.plist"
+          with info.open("rb") as fh:
+              data = plistlib.load(fh)
+          data["ApplicationProperties"] = {
+              "ApplicationPath": "Applications/love.app",
+              "Architectures": ["arm64"],
+              "CFBundleIdentifier": os.environ["BUNDLE_ID"],
+              "CFBundleShortVersionString": os.environ["APP_VERSION"],
+              "CFBundleVersion": os.environ["BUILD_NUMBER"],
+              "SigningIdentity": "",
+              "Team": os.environ["TEAM_ID"],
+          }
+          data["ArchiveVersion"] = 2
+          data["Name"] = os.environ["APP_NAME"]
+          data["SchemeName"] = "love-ios"
+          with info.open("wb") as fh:
+              plistlib.dump(data, fh)
+          print("ApplicationProperties", data["ApplicationProperties"])
+          PY
+          test -d "$ARCHIVE/Products/Applications/love.app"
+
+      - name: Export with App Store distribution signing and upload to TestFlight
+        env:
+          APPSTORE_API_KEY_ID: ${{ secrets.APPSTORE_API_KEY_ID }}
+          APPSTORE_API_ISSUER_ID: ${{ secrets.APPSTORE_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>export</string>
+            <key>teamID</key><string>${TEAM_ID}</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict></plist>
+          PLIST
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/Cindarc.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates -authenticationKeyPath "$KEYFILE" \
+            -authenticationKeyID "$APPSTORE_API_KEY_ID" -authenticationKeyIssuerID "$APPSTORE_API_ISSUER_ID" \
+            | tee "$RUNNER_TEMP/export.log" | tail -80
+          ls -la "$RUNNER_TEMP/export"
+          set +e
+          xcrun altool --upload-app -t ios -f "$RUNNER_TEMP"/export/*.ipa \
+            --apiKey "$APPSTORE_API_KEY_ID" --apiIssuer "$APPSTORE_API_ISSUER_ID" 2>&1 | tee "$RUNNER_TEMP/upload.log"
+          set -e
+          if grep -E -q "ERROR|error:" "$RUNNER_TEMP/upload.log"; then
+            if grep -E -q "Cannot determine the Apple ID|No suitable application records were found|does not exist on App Store Connect|ITMS-90186|No app record" "$RUNNER_TEMP/upload.log"; then
+              echo "::error::No App Store Connect app record for ${BUNDLE_ID} yet. Create it in App Store Connect → Apps → + with bundle id ${BUNDLE_ID}, then re-run ios-testflight. Archive and export succeeded; only the app record is missing, and that record cannot be created via the API."
+            else
+              echo "::error::TestFlight upload failed. See the upload log artifact."
+            fi
+            exit 1
+          fi
+          echo "::notice::Uploaded ${BUNDLE_ID} ${APP_VERSION} (${{ github.run_number }}) to App Store Connect"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: testflight-logs
+          path: |
+            ${{ runner.temp }}/archive.log
+            ${{ runner.temp }}/export.log
+            ${{ runner.temp }}/upload.log
+          if-no-files-found: ignore
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cindarc-ipa
+          path: ${{ runner.temp }}/export/*.ipa
+          if-no-files-found: ignore
+
+      - name: Cleanup key
+        if: always()
+        run: rm -rf ~/.appstoreconnect/private_keys

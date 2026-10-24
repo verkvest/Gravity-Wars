@@ -1,26 +1,27 @@
-# Gravity Wars
+# Cindarc
 
-*Gravity Wars* is an [artillery game](https://en.wikipedia.org/wiki/Artillery_game) like [_Scorched Earth_](https://en.wikipedia.org/wiki/Scorched_Earth_(video_game)) or [_Worms_](https://en.wikipedia.org/wiki/Worms_(series)) but with many planets affecting the path of the projectile.
+Cindarc is a two-ship gravity artillery game for phones. Shots curve around the planets. Play against the on-device pilot, or pass the phone for a hot-seat match.
 
-![gravitywars](https://user-images.githubusercontent.com/17264277/87047616-be62fe00-c1c8-11ea-9395-70a5d344923c.png)
+It is a rebrand of [Gravity Wars](https://github.com/whyboris/Gravity-Wars) by Boris (MIT, 2020), built with [LÖVE](https://love2d.org/) 11.5 (zlib). The original title is not used for the app.
 
-## Background
+Bundle id, iOS and Android: `es.verkvest.cindarc`
 
-_Gravity Wars_ is not my original idea. In 2007 I played a 1992 MAC version of this game with my friend and thought it was fun. From my brief correspondence with the creator (Rhys Hollow) of the version for Macintosh I learned the original game was written for Amiga (and not by him). In 2009 I learned how to code to create a clone of the game: https://yboris.dev/gravitywars
+## Play on a computer
 
-In 2015 I tried to re-create the game for the iPad using [Codea](https://codea.io/) but lost interest. I finally got around to sharing my code for it in [2019](https://codea.io/talk/discussion/9563/gravity-wars-giving-away-my-code-on-unfinished-game).
+1. Install [LÖVE 11.5](https://love2d.org/).
+2. From this directory run `love .`
 
-In 2020 a co-worker shared [LÖVE](https://love2d.org/) (aka _Love2D_) which, like Codea, uses the *Lua* programming language. I decided to port over my code to _LÖVE_ so as to share this fun game with more people.
+Drag from your ship to aim. Distance from the ship sets power. **FIRE** launches. **Needle**, **Spread**, and **Fan** change the volley. Licenses are on the main menu.
 
-The initial commit code is a very quick and dirty port of my 2015 prototype code, which in turn is a quick and dirty port of my 2009 self-taught code. In subsequent commits I improved the code somewhat, but I wouldn't say the current codebase is a good example of how to code well.
+## Phone builds
 
-## Development
+GitHub Actions builds both stores from the official engine projects. The game is zipped to `game.love` and fused in.
 
-1. Install [LÖVE](https://love2d.org/) (game confirmed to work with v11.3)
-2. In your terminal run `love .`
+- `ios-testflight` checks out LÖVE 11.5, drops in the Apple library xcframeworks, and archives the `love-ios` target with Xcode. Export uses automatic App Store signing (`teamID` `38PT254HDZ`) and `xcrun altool` uploads the ipa. The bundle id is registered through the App Store Connect API when it is missing. The App Store Connect *app* record cannot be created by the API.
+- `android` checks out `love-android` `11.5a`, embeds `game.love`, and builds an `embedNoRecord` release APK and AAB with `targetSdk` 36.
 
-## License
+Landscape only. Touch controls sit inside the safe area.
 
-Please feel free to use this code (in full or in part) however you'd like, under the permissive _MIT_ license.
+## Credits
 
-Thank you to Manchson for the _MIT_ licensed [`basis33.ttf`](https://github.com/Manchson/basis33) font.
+See `THIRD_PARTY_LICENSES.txt` and the in-game Licenses screen. Ship sprites and the original rules are Boris's. The typeface is basis33 (Tristan Grimmer, Manchson, MIT).
