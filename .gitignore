@@ -4,3 +4,5 @@ build/
 xdg/
 squashfs-root/
 *.AppImage
+__pycache__/
+*.pyc
