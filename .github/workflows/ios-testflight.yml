@@ -103,6 +103,25 @@ jobs:
           sed -i '' 's/c++0x/c++14/g' \
             love/platform/xcode/love.xcodeproj/project.pbxproj \
             love/platform/xcode/liblove.xcodeproj/project.pbxproj
+          # Install only love.app. A command-line SKIP_INSTALL=NO would also
+          # install liblove.a and Xcode would treat the archive as generic.
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("love/platform/xcode/love.xcodeproj/project.pbxproj")
+          text = p.read_text()
+          needle = '\t\t\t\tINFOPLIST_FILE = "$(SRCROOT)/ios/love-ios.plist";\n'
+          addition = needle + "\t\t\t\tINSTALL_PATH = /Applications;\n\t\t\t\tSKIP_INSTALL = NO;\n"
+          if needle + "\t\t\t\tINSTALL_PATH = /Applications;\n" not in text:
+              count = text.count(needle)
+              if count < 1:
+                  raise SystemExit("love-ios Info.plist build setting not found")
+              text = text.replace(needle, addition)
+              p.write_text(text)
+              print(f"set INSTALL_PATH on {count} love-ios configs")
+          lib = Path("love/platform/xcode/liblove.xcodeproj/project.pbxproj").read_text()
+          if "SKIP_INSTALL = YES;" not in lib:
+              raise SystemExit("liblove must keep SKIP_INSTALL = YES")
+          PY
 
       - name: Archive (unsigned; cloud signing happens at export)
         env:
@@ -126,9 +145,13 @@ jobs:
             IPHONEOS_DEPLOYMENT_TARGET=15.0 \
             ENABLE_BITCODE=NO \
             ENABLE_USER_SCRIPT_SANDBOXING=NO \
-            SKIP_INSTALL=NO INSTALL_PATH=/Applications \
             archive | tee "$RUNNER_TEMP/archive.log" | tail -80
-          APP=$(find "$RUNNER_TEMP/Cindarc.xcarchive/Products" -name '*.app' -type d | head -1)
+          ARCHIVE="$RUNNER_TEMP/Cindarc.xcarchive"
+          # A static library next to the app makes export reject every method.
+          find "$ARCHIVE/Products" -name '*.a' -not -path '*.app/*' -print -delete
+          echo "---- archive products ----"
+          find "$ARCHIVE/Products" -maxdepth 3 -print
+          APP=$(find "$ARCHIVE/Products" -name '*.app' -type d | head -1)
           [ -n "$APP" ]
           echo "archived app: $APP"
           rm -rf "$APP/game.love"
@@ -137,6 +160,29 @@ jobs:
             "$APP_VERSION" "${{ github.run_number }}" "$BUNDLE_ID" "$APP_NAME"
           /usr/libexec/PlistBuddy -c Print "$APP/Info.plist" | head -40
           test -f "$APP/game.love"
+          BUILD_NUMBER="${{ github.run_number }}" python3 - <<'PY'
+          import os, plistlib
+          from pathlib import Path
+          info = Path(os.environ["RUNNER_TEMP"]) / "Cindarc.xcarchive" / "Info.plist"
+          with info.open("rb") as fh:
+              data = plistlib.load(fh)
+          data["ApplicationProperties"] = {
+              "ApplicationPath": "Applications/love.app",
+              "Architectures": ["arm64"],
+              "CFBundleIdentifier": os.environ["BUNDLE_ID"],
+              "CFBundleShortVersionString": os.environ["APP_VERSION"],
+              "CFBundleVersion": os.environ["BUILD_NUMBER"],
+              "SigningIdentity": "",
+              "Team": os.environ["TEAM_ID"],
+          }
+          data["ArchiveVersion"] = 2
+          data["Name"] = os.environ["APP_NAME"]
+          data["SchemeName"] = "love-ios"
+          with info.open("wb") as fh:
+              plistlib.dump(data, fh)
+          print("ApplicationProperties", data["ApplicationProperties"])
+          PY
+          test -d "$ARCHIVE/Products/Applications/love.app"
 
       - name: Export with App Store distribution signing and upload to TestFlight
         env:

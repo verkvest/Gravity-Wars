@@ -45,6 +45,7 @@ header = "\n".join([
     "app.orientation=landscape",
     f"app.version_code={version_code}",
     "app.version_name=0.1.0",
+    "android.suppressUnsupportedCompileSdk=36",
     "org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8",
     "org.gradle.parallel=false",
 ])
@@ -63,6 +64,7 @@ mk.write_text(text)
 app_gradle = tree / "app" / "build.gradle"
 extra = """
 android {
+    buildToolsVersion "35.0.0"
     androidResources {
         noCompress += ["love"]
     }
